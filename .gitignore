@@ -53,3 +53,25 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# Keil MDK
+Objects/
+Listings/
+*.uvguix.*
+*.scvd
+JLinkLog.txt
+*.crf
+*.d
+*.dep
+*.lnp
+*.bak
+*.Administrator.*
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# IDE
+.vscode/
+.idea/
