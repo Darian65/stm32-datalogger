@@ -21,7 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -48,7 +48,11 @@ TIM_HandleTypeDef htim3;
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
+#define ADC_BUF_LEN   10
+#define VREF_MV       3300
 
+__IO uint8_t  adc_ready = 0;
+uint16_t      adc_buf[ADC_BUF_LEN];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -64,7 +68,19 @@ static void MX_TIM3_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+int fputc(int ch, FILE *f)
+{
+  HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, 0xFFFF);
+  return ch;
+}
 
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
+{
+  if (hadc->Instance == ADC1)
+  {
+    adc_ready = 1;
+  }
+}
 /* USER CODE END 0 */
 
 /**
@@ -101,7 +117,11 @@ int main(void)
   MX_USART1_UART_Init();
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
+  printf("datalogger ready\r\n");
 
+  HAL_TIM_Base_Start(&htim3);
+  HAL_ADCEx_Calibration_Start(&hadc1);
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_buf, ADC_BUF_LEN);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -111,6 +131,24 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    if (adc_ready)
+    {
+      uint32_t sum = 0;
+      uint16_t i;
+      uint16_t avg;
+      uint16_t mv;
+
+      adc_ready = 0;
+
+      for (i = 0; i < ADC_BUF_LEN; i++)
+      {
+        sum += adc_buf[i];
+      }
+      avg = (uint16_t)(sum / ADC_BUF_LEN);
+      mv  = (uint16_t)(avg * (uint32_t)VREF_MV / 4095UL);
+
+      printf("adc = %4u, mv = %4u\r\n", avg, mv);
+    }
   }
   /* USER CODE END 3 */
 }
