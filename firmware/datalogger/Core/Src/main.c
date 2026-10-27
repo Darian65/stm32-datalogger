@@ -22,6 +22,8 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include "mpu6050.h"        /* 通道二：I2C 六轴 */
+#include "adc_dma.h"        /* 通道一：ADC + DMA */
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -43,16 +45,14 @@
 ADC_HandleTypeDef hadc1;
 DMA_HandleTypeDef hdma_adc1;
 
+I2C_HandleTypeDef hi2c2;
+
 TIM_HandleTypeDef htim3;
 
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
-#define ADC_BUF_LEN   10
-#define VREF_MV       3300
-
-__IO uint8_t  adc_ready = 0;
-uint16_t      adc_buf[ADC_BUF_LEN];
+MPU6050_t   mpu;            /* 六轴数据，由主循环打印 */
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -62,25 +62,24 @@ static void MX_DMA_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_TIM3_Init(void);
+static void MX_I2C2_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+/* printf 重定向到 USART1 (PA9)
+ * 注意：Keil 必须勾选 Options -> Target -> Use MicroLIB，
+ *       否则标准库走半主机模式，脱离调试器后一调用 printf 即卡死 */
 int fputc(int ch, FILE *f)
 {
   HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, 0xFFFF);
   return ch;
 }
 
-void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
-{
-  if (hadc->Instance == ADC1)
-  {
-    adc_ready = 1;
-  }
-}
+
 /* USER CODE END 0 */
 
 /**
@@ -116,12 +115,25 @@ int main(void)
   MX_ADC1_Init();
   MX_USART1_UART_Init();
   MX_TIM3_Init();
+  MX_I2C2_Init();
   /* USER CODE BEGIN 2 */
+  uint8_t ret;
+
   printf("datalogger ready\r\n");
 
-  HAL_TIM_Base_Start(&htim3);
-  HAL_ADCEx_Calibration_Start(&hadc1);
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_buf, ADC_BUF_LEN);
+  ret = MPU6050_Init();
+  if (ret == 0)
+  {
+    printf("mpu6050 ready, WHO_AM_I = 0x%02X\r\n", MPU6050_GetID());
+  }
+  else
+  {
+    /* 传感器异常时不阻塞启动，ADC 通道照常输出，便于区分总线故障与器件故障 */
+    printf("mpu6050 init failed, code = %d\r\n", ret);
+  }
+
+  /* 通道一：TIM3 每 10ms 触发一次 ADC，攒满 10 个 = 100ms 一帧 */
+  ADC_DMA_Start();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -131,23 +143,21 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    if (adc_ready)
+    if (ADC_DMA_IsReady())                  /* 100ms 到，一批样本就绪 */
     {
-      uint32_t sum = 0;
-      uint16_t i;
-      uint16_t avg;
-      uint16_t mv;
+      uint16_t avg = ADC_DMA_GetAvg();      /* 10 点平均，压制随机噪声 */
+      uint16_t mv  = ADC_ToMillivolt(avg);
 
-      adc_ready = 0;
-
-      for (i = 0; i < ADC_BUF_LEN; i++)
+      /* 通道二：I2C 读六轴；通信失败由驱动内部计数，主流程不阻塞 */
+      if (MPU6050_IsReady())
       {
-        sum += adc_buf[i];
+        MPU6050_ReadAll(&mpu);
       }
-      avg = (uint16_t)(sum / ADC_BUF_LEN);
-      mv  = (uint16_t)(avg * (uint32_t)VREF_MV / 4095UL);
 
-      printf("adc = %4u, mv = %4u\r\n", avg, mv);
+      printf("mv=%4u ax=%6d ay=%6d az=%6d gx=%5d gy=%5d gz=%5d err=%lu\r\n",
+             mv, mpu.accX, mpu.accY, mpu.accZ,
+             mpu.gyroX, mpu.gyroY, mpu.gyroZ,
+             (unsigned long)MPU6050_GetErrCount());
     }
   }
   /* USER CODE END 3 */
@@ -243,6 +253,40 @@ static void MX_ADC1_Init(void)
   /* USER CODE BEGIN ADC1_Init 2 */
 
   /* USER CODE END ADC1_Init 2 */
+
+}
+
+/**
+  * @brief I2C2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C2_Init(void)
+{
+
+  /* USER CODE BEGIN I2C2_Init 0 */
+
+  /* USER CODE END I2C2_Init 0 */
+
+  /* USER CODE BEGIN I2C2_Init 1 */
+
+  /* USER CODE END I2C2_Init 1 */
+  hi2c2.Instance = I2C2;
+  hi2c2.Init.ClockSpeed = 100000;
+  hi2c2.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c2.Init.OwnAddress1 = 0;
+  hi2c2.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c2.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c2.Init.OwnAddress2 = 0;
+  hi2c2.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c2.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C2_Init 2 */
+
+  /* USER CODE END I2C2_Init 2 */
 
 }
 
@@ -353,6 +397,7 @@ static void MX_GPIO_Init(void)
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
 /* USER CODE END MX_GPIO_Init_2 */
