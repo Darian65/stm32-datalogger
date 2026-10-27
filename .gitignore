@@ -57,14 +57,29 @@ dkms.conf
 # Keil MDK
 Objects/
 Listings/
-*.uvguix.*
-*.scvd
-JLinkLog.txt
+
+# 新版 MDK(>=5.32) 输出目录与工程同名，不是 Objects/
+**/MDK-ARM/*/
+*.axf
+*.hex
+*.sct
+*.lnp
+*.lst
+*.map
+*.htm
+*.build_log.htm
 *.crf
 *.d
 *.dep
-*.lnp
 *.bak
+
+# Keil 个人配置（含本机绝对路径，换电脑即失效）
+*.uvguix.*
+*.uvoptx
+DebugConfig/
+*.dbgconf
+*.scvd
+JLinkLog.txt
 *.Administrator.*
 
 # Python
