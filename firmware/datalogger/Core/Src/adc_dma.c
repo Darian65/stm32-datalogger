@@ -20,10 +20,11 @@ extern TIM_HandleTypeDef htim3;
  * TODO: 用万用表量板上 3V3 引脚后修正，直接决定绝对精度 */
 #define VREF_MV       3300
 
-/* DMA 写入目标。__IO(volatile) 不可省：该数组由 DMA 硬件写、CPU 读，
- * 此路径编译器无法追踪，不加 volatile 可能优化掉重复读取 */
+/* s_ready 由 ADC 转换完成回调（中断上下文）写、主循环读；
+ * s_buf 由 DMA 硬件直接写。两条路径编译器都追踪不到，
+ * __IO(volatile) 不可省，否则可能被优化掉重复读取 */
 static __IO uint8_t  s_ready = 0;
-static uint16_t      s_buf[ADC_BUF_LEN];
+static __IO uint16_t s_buf[ADC_BUF_LEN];
 
 /**
   * @brief  启动采集，顺序不可调换

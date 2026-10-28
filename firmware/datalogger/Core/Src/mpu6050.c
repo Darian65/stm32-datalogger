@@ -19,12 +19,13 @@
 
 extern I2C_HandleTypeDef hi2c2;        /* CubeMX 生成于 main.c */
 
-/* ============================================================
- * 寄存器定义（RM-MPU-6000A 寄存器映射）
- * ============================================================ */
+/* 寄存器定义（RM-MPU-6000A 寄存器映射） */
 #define MPU6050_ADDR            (0x68 << 1)     /* 7bit 地址 0x68；最低位由 HAL 补读写标志 */
 
-#define MPU6050_TIMEOUT         100             /* I2C 单次操作超时(ms) */
+/* I2C 单次操作超时(ms)。实测读 14 字节约 1.56ms，10ms 有 6 倍余量。
+ * 不可设成接近帧周期（100ms）：传感器掉线时每次读都要等满超时，
+ * 主循环会被拖死；10ms 时最坏只占帧周期 10%，系统仍能维持采集 */
+#define MPU6050_TIMEOUT         10
 
 #define MPU6050_REG_SMPLRT_DIV  0x19            /* 陀螺输出分频 */
 #define MPU6050_REG_CONFIG      0x1A            /* 数字低通滤波 */
@@ -34,9 +35,7 @@ extern I2C_HandleTypeDef hi2c2;        /* CubeMX 生成于 main.c */
 #define MPU6050_REG_PWR_MGMT_1  0x6B            /* 电源管理 */
 #define MPU6050_REG_WHO_AM_I    0x75            /* 器件 ID */
 
-/* ============================================================
- * 模块内部状态（外部只能经 IsReady() / GetErrCount() 只读访问）
- * ============================================================ */
+/* 模块内部状态，外部只能经 IsReady() / GetErrCount() 只读访问 */
 static uint8_t  s_ready   = 0;
 static uint32_t s_err_cnt = 0;
 static uint8_t  s_id      = 0;         /* Init 时读到的 WHO_AM_I，用于追溯器件批次 */
@@ -77,7 +76,7 @@ uint8_t MPU6050_Init(void)
   }
 
   /* 原版返回 0x68；兼容芯片（MPU6500 die 等）常见 0x70，寄存器布局一致，
-   * 故仅拦截悬空/干扰值 TODO: 区分记录实际 ID 便于追溯器件批次 */
+   * 故仅拦截悬空/干扰值，实际 ID 存 s_id，由 GetID() 供启动横幅打印 */
   if (id != 0x68)
   {
     if (id == 0x00 || id == 0xFF)
@@ -125,7 +124,7 @@ uint8_t MPU6050_Init(void)
 
 /**
   * @brief  一次性读回 6 轴 + 温度（0x3B~0x48 共 14 字节，地址连续，
-  *         利用 I2C 地址自增单次读回，省去多次 START 开销）
+  *         单次读回即为同一时刻的一致性快照）
   * @param  p 数据容器指针
   * @retval 0 = 成功，1 = 失败（内部错误计数 +1）
   */

@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include "mpu6050.h"        /* 通道二：I2C 六轴 */
 #include "adc_dma.h"        /* 通道一：ADC + DMA */
+#include "protocol.h"       /* 上行帧打包（格式见 docs/protocol.md） */
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -52,7 +53,11 @@ TIM_HandleTypeDef htim3;
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
-MPU6050_t   mpu;            /* 六轴数据，由主循环打印 */
+MPU6050_t   mpu;                            /* 六轴数据，由 ReadAll 更新 */
+
+/* 打包缓冲区，模块级静态；每帧整体重写，不留历史 */
+static PROTO_Sample_t s_sample;
+static uint8_t        s_frame[PROTO_FRAME_LEN];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -134,6 +139,10 @@ int main(void)
 
   /* 通道一：TIM3 每 10ms 触发一次 ADC，攒满 10 个 = 100ms 一帧 */
   ADC_DMA_Start();
+
+  /* 启动横幅保持文本，仅复位后打印一次；主循环起改发二进制帧。
+     横幅字节不含 0xAA，上位机按 SOF 同步时不会把它误判成帧头。
+     TODO: I2C 错误计数（MPU6050_GetErrCount）尚未进帧 */
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -146,7 +155,7 @@ int main(void)
     if (ADC_DMA_IsReady())                  /* 100ms 到，一批样本就绪 */
     {
       uint16_t avg = ADC_DMA_GetAvg();      /* 10 点平均，压制随机噪声 */
-      uint16_t mv  = ADC_ToMillivolt(avg);
+      uint16_t len;
 
       /* 通道二：I2C 读六轴；通信失败由驱动内部计数，主流程不阻塞 */
       if (MPU6050_IsReady())
@@ -154,10 +163,20 @@ int main(void)
         MPU6050_ReadAll(&mpu);
       }
 
-      printf("mv=%4u ax=%6d ay=%6d az=%6d gx=%5d gy=%5d gz=%5d err=%lu\r\n",
-             mv, mpu.accX, mpu.accY, mpu.accZ,
-             mpu.gyroX, mpu.gyroY, mpu.gyroZ,
-             (unsigned long)MPU6050_GetErrCount());
+      /* SysTick / ADC / I2C 三路合进同一帧，共用同一时间戳 */
+      s_sample.tick_ms = HAL_GetTick();
+      s_sample.adc_mv  = ADC_ToMillivolt(avg);
+      s_sample.accX    = mpu.accX;
+      s_sample.accY    = mpu.accY;
+      s_sample.accZ    = mpu.accZ;
+      s_sample.gyroX   = mpu.gyroX;
+      s_sample.gyroY   = mpu.gyroY;
+      s_sample.gyroZ   = mpu.gyroZ;
+
+      /* 24 字节 @115200 约 2.1ms，比原先 72 字节文本行（约 6.3ms）省 4ms 以上。
+         超时取 100ms 而非 0xFFFF：发送卡死时最多丢一帧，不让主循环长时间阻塞 */
+      len = PROTO_PackData(&s_sample, s_frame);
+      HAL_UART_Transmit(&huart1, s_frame, len, 100);
     }
   }
   /* USER CODE END 3 */
