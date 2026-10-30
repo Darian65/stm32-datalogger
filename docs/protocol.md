@@ -11,6 +11,22 @@
 
 改二进制后余量留给后续 FreeRTOS 任务拆分与稳定性加固，同时帧长固定、可 CRC 校验、可据 TICK 判丢帧。
 
+## 数据流
+
+```mermaid
+flowchart LR
+    A["电位器<br/>PA0"] -->|"ADC1 + DMA<br/>TIM3 TRGO 100 Hz<br/>10 点平均"| C["PROTO_Sample_t<br/>tick_ms / adc_mv / 六轴"]
+    B["MPU6050<br/>PB10 PB11 I2C2<br/>100 kHz"] -->|"连读 14 字节<br/>0x3B 起地址自增"| C
+    T["HAL_GetTick<br/>毫秒时间戳"] --> C
+    C -->|"PROTO_PackData"| P["24 字节帧<br/>AA 01 12 ... CRC 55"]
+    P -->|"HAL_UART_Transmit<br/>115200 8N1<br/>约 2.08 ms"| S["上位机字节流"]
+    S --> M{"找 0xAA<br/>数满 24 字节"}
+    M -->|"偏移 23 = 0x55<br/>且 CRC 通过"| U["解包<br/>写 CSV / 画曲线"]
+    M -->|"任一条不满足"| R["回退 1 字节<br/>继续找下一个 0xAA"]
+```
+
+三路数据（系统时钟、ADC、I2C）合进同一帧、共享同一 TICK，上位机拿到的是同一时刻的一致性快照。
+
 ## 帧格式（数据帧，CMD = 0x01）
 
 | 偏移 | 长度 | 字段 | 类型 | 说明 |
